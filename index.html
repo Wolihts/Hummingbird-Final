@@ -1,0 +1,856 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GarageBand Inspired Music Tool UI</title>
+  <style>
+    :root {
+      --bg: #111315;
+      --panel: #1a1d21;
+      --panel-2: #23272c;
+      --panel-3: #1c1f23;
+      --border: rgba(255, 255, 255, 0.09);
+      --text: #f3f5f7;
+      --muted: rgba(255, 255, 255, 0.55);
+      --soft: rgba(255, 255, 255, 0.35);
+      --lane: #07110b;
+      --lane-grid: #15321b;
+      --clip: rgba(74, 222, 128, 0.18);
+      --clip-line: #4ade80;
+      --shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+      --radius: 32px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 16px;
+    }
+
+    .app-shell {
+      max-width: 1500px;
+      margin: 0 auto;
+      min-height: calc(100vh - 32px);
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      box-shadow: var(--shadow);
+      display: grid;
+      grid-template-columns: 280px 1fr;
+    }
+
+    .sidebar {
+      background: linear-gradient(180deg, var(--panel-2) 0%, var(--panel-3) 100%);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .sidebar-header {
+      padding: 20px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .eyebrow,
+    .mini-label {
+      text-transform: uppercase;
+      letter-spacing: 0.3em;
+      font-size: 11px;
+      color: rgba(255, 255, 255, 0.35);
+    }
+
+    .sidebar-header h1 {
+      margin: 10px 0 8px;
+      font-size: 30px;
+    }
+
+    .sidebar-header p,
+    .workspace-copy,
+    .tool-subtitle,
+    .stat-label,
+    .control-row span:first-child,
+    .track-meta,
+    .transport-label {
+      color: var(--muted);
+    }
+
+    .tool-list {
+      padding: 12px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .tool-button {
+      width: 100%;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: 22px;
+      background: rgba(255, 255, 255, 0.03);
+      color: var(--text);
+      padding: 16px;
+      text-align: left;
+      cursor: pointer;
+      transition: 0.2s ease;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .tool-button:hover {
+      background: rgba(255, 255, 255, 0.06);
+    }
+
+    .tool-button.active {
+      background: rgba(255, 255, 255, 0.1);
+      border-color: rgba(255, 255, 255, 0.18);
+    }
+
+    .tool-icon {
+      width: 46px;
+      height: 46px;
+      border-radius: 18px;
+      display: grid;
+      place-items: center;
+      font-size: 22px;
+      font-weight: 700;
+      color: white;
+      flex-shrink: 0;
+    }
+
+    .tool-title {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+
+    .workspace {
+      display: grid;
+      grid-template-rows: 1fr auto;
+      min-height: calc(100vh - 34px);
+      background: #0f1216;
+    }
+
+    .workspace-top {
+      position: relative;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at top, rgba(255,255,255,0.05), transparent 35%),
+        linear-gradient(180deg, #1a1f24 0%, #111418 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 32px;
+    }
+
+    .workspace-top::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      opacity: 0.06;
+      background-image:
+        linear-gradient(to right, rgba(255,255,255,0.15) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(255,255,255,0.12) 1px, transparent 1px);
+      background-size: 42px 42px;
+      pointer-events: none;
+    }
+
+    .workspace-card {
+      position: relative;
+      z-index: 1;
+      width: min(100%, 980px);
+      border-radius: 32px;
+      border: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.04);
+      padding: 32px;
+      backdrop-filter: blur(10px);
+      box-shadow: var(--shadow);
+    }
+
+    .workspace-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 20px;
+      align-items: flex-start;
+    }
+
+    .workspace-head h2 {
+      margin: 14px 0 0;
+      font-size: clamp(36px, 5vw, 54px);
+      line-height: 1;
+    }
+
+    .workspace-copy {
+      margin-top: 16px;
+      max-width: 680px;
+      line-height: 1.8;
+      font-size: 15px;
+    }
+
+    .workspace-badge {
+      width: 82px;
+      height: 82px;
+      border-radius: 26px;
+      flex-shrink: 0;
+      display: grid;
+      place-items: center;
+      font-size: 30px;
+      font-weight: 700;
+    }
+
+    .stats,
+    .detail-grid {
+      display: grid;
+      gap: 16px;
+      margin-top: 28px;
+    }
+
+    .stats {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .detail-grid {
+      grid-template-columns: 1.2fr 0.8fr;
+    }
+
+    .stat-card,
+    .detail-card {
+      border: 1px solid var(--border);
+      border-radius: 22px;
+      background: rgba(0, 0, 0, 0.2);
+      padding: 18px;
+    }
+
+    .stat-value {
+      font-size: 20px;
+      font-weight: 600;
+      margin-top: 12px;
+    }
+
+    .bars {
+      display: flex;
+      height: 122px;
+      align-items: end;
+      gap: 8px;
+      margin-top: 18px;
+    }
+
+    .bar {
+      flex: 1;
+      border-radius: 12px 12px 0 0;
+      background: linear-gradient(to top, rgba(16, 185, 129, 0.8), rgba(110, 231, 183, 0.95));
+    }
+
+    .control-stack {
+      display: grid;
+      gap: 18px;
+      margin-top: 18px;
+    }
+
+    .control-row {
+      display: grid;
+      gap: 8px;
+    }
+
+    .control-top {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.2em;
+      color: rgba(255,255,255,0.35);
+    }
+
+    .control-track {
+      height: 12px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.1);
+      overflow: hidden;
+    }
+
+    .control-fill {
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(to right, #4ade80, #bef264);
+    }
+
+    .timeline-wrapper {
+      border-top: 1px solid var(--border);
+      background: #0a0d12;
+    }
+
+    .timeline-layout {
+      display: grid;
+      grid-template-columns: 280px 1fr;
+    }
+
+    .track-sidebar {
+      background: linear-gradient(180deg, #262a2f 0%, #1d2126 100%);
+      border-right: 1px solid var(--border);
+    }
+
+    .track-row {
+      height: 102px;
+      border-bottom: 1px solid var(--border);
+      padding: 16px 18px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .track-name {
+      font-size: 21px;
+      font-weight: 500;
+      margin-bottom: 12px;
+    }
+
+    .track-controls {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .round-btn {
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      border: 1px solid rgba(255,255,255,0.22);
+      background: transparent;
+    }
+
+    .track-slider {
+      width: 170px;
+      height: 12px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.08);
+      position: relative;
+    }
+
+    .track-slider::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      left: 66%;
+      transform: translate(-50%, -50%);
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.35);
+      box-shadow: 0 0 0 2px rgba(255,255,255,0.25);
+    }
+
+    .track-thumb {
+      width: 54px;
+      height: 54px;
+      border-radius: 18px;
+      background: rgba(255,255,255,0.05);
+      display: grid;
+      place-items: center;
+      font-size: 26px;
+    }
+
+    .timeline-main {
+      overflow-x: auto;
+      position: relative;
+    }
+
+    .timeline-scroll {
+      min-width: 980px;
+      position: relative;
+    }
+
+    .ruler {
+      display: grid;
+      grid-template-columns: repeat(8, minmax(90px, 1fr));
+      background: #131821;
+      border-bottom: 1px solid var(--border);
+      color: rgba(255,255,255,0.6);
+      font-size: 15px;
+    }
+
+    .measure {
+      position: relative;
+      padding: 10px 12px 12px;
+      border-right: 1px solid var(--border);
+    }
+
+    .ticks {
+      margin-top: 6px;
+      height: 12px;
+      background: repeating-linear-gradient(
+        to right,
+        rgba(255,255,255,0.25) 0,
+        rgba(255,255,255,0.25) 1px,
+        transparent 1px,
+        transparent 12px
+      );
+      opacity: 0.4;
+    }
+
+    .playhead {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      background: rgba(255,255,255,0.72);
+      right: 8%;
+      z-index: 10;
+    }
+
+    .lane-row {
+      display: grid;
+      grid-template-columns: repeat(8, minmax(90px, 1fr));
+      height: 102px;
+      background: var(--lane);
+      border-bottom: 1px solid #10151b;
+    }
+
+    .lane-cell {
+      position: relative;
+      border-right: 1px solid var(--lane-grid);
+      background: linear-gradient(180deg, rgba(13,101,30,0.92) 0%, rgba(8,92,23,0.96) 100%);
+      overflow: hidden;
+    }
+
+    .lane-cell::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: repeating-linear-gradient(
+        to right,
+        rgba(0,0,0,0.18) 0,
+        rgba(0,0,0,0.18) 1px,
+        transparent 1px,
+        transparent 22px
+      );
+      opacity: 0.7;
+    }
+
+    .clip {
+      position: absolute;
+      inset: 14px 10px;
+      border-radius: 14px;
+      background: var(--clip);
+      border: 1px solid rgba(110, 231, 183, 0.18);
+      display: none;
+    }
+
+    .lane-cell.active .clip {
+      display: block;
+    }
+
+    .clip-line {
+      position: absolute;
+      left: 12px;
+      right: 12px;
+      top: 50%;
+      transform: translateY(-50%);
+      height: 4px;
+      border-radius: 999px;
+      background: var(--clip-line);
+      box-shadow: 0 0 12px rgba(74, 222, 128, 0.6);
+    }
+
+    .clip-notes {
+      position: absolute;
+      left: 12px;
+      right: 12px;
+      top: 18px;
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 6px;
+    }
+
+    .clip-notes span {
+      height: 6px;
+      border-radius: 999px;
+      background: rgba(110, 231, 183, 0.95);
+    }
+
+    .transport {
+      position: absolute;
+      left: 24px;
+      bottom: 18px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 14px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: rgba(255,255,255,0.04);
+      backdrop-filter: blur(10px);
+      z-index: 2;
+    }
+
+    .transport-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #4ade80;
+      box-shadow: 0 0 12px rgba(74, 222, 128, 0.75);
+    }
+
+    @media (max-width: 980px) {
+      .app-shell {
+        grid-template-columns: 1fr;
+      }
+
+      .sidebar {
+        border-right: 0;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .workspace {
+        min-height: auto;
+      }
+
+      .stats,
+      .detail-grid,
+      .timeline-layout {
+        grid-template-columns: 1fr;
+      }
+
+      .track-sidebar {
+        display: none;
+      }
+
+      .workspace-head {
+        flex-direction: column;
+      }
+
+      .workspace-badge {
+        width: 70px;
+        height: 70px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div class="eyebrow">Studio Tools</div>
+        <h1>Music Tool UI</h1>
+        <p>Pick a tool to change the workspace and track view.</p>
+      </div>
+      <div class="tool-list" id="toolList"></div>
+    </aside>
+
+    <section class="workspace">
+      <div class="workspace-top">
+        <div class="workspace-card">
+          <div class="workspace-head">
+            <div>
+              <div class="eyebrow">Active Workspace</div>
+              <h2 id="panelTitle">Guitar Controls</h2>
+              <p class="workspace-copy" id="panelText"></p>
+            </div>
+            <div class="workspace-badge" id="workspaceBadge">G</div>
+          </div>
+
+          <div class="stats">
+            <div class="stat-card">
+              <div class="stat-label mini-label">Tone</div>
+              <div class="stat-value" id="toneValue">Warm</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label mini-label">Mode</div>
+              <div class="stat-value" id="modeValue">Guitar</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label mini-label">Output</div>
+              <div class="stat-value" id="outputValue">Stereo</div>
+            </div>
+          </div>
+
+          <div class="detail-grid">
+            <div class="detail-card">
+              <div class="transport-label">Performance View</div>
+              <div class="bars" id="performanceBars"></div>
+            </div>
+            <div class="detail-card">
+              <div class="transport-label">Quick Controls</div>
+              <div class="control-stack" id="quickControls"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="transport">
+          <div class="transport-dot"></div>
+          <span class="transport-label">Live Session</span>
+        </div>
+      </div>
+
+      <div class="timeline-wrapper">
+        <div class="timeline-layout">
+          <div class="track-sidebar" id="trackSidebar"></div>
+
+          <div class="timeline-main">
+            <div class="timeline-scroll">
+              <div class="ruler" id="ruler"></div>
+              <div class="playhead"></div>
+              <div id="laneContainer"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const tools = [
+      {
+        id: 'drums',
+        name: 'Drums',
+        icon: 'D',
+        badge: 'D',
+        gradient: 'linear-gradient(135deg, rgba(16,185,129,0.32), rgba(74,222,128,0.12))',
+        panelTitle: 'Drum Machine',
+        panelText: 'Build punchy patterns, adjust groove, and shape the rhythm section.',
+        tone: 'Punchy',
+        output: 'Stereo',
+        bars: [30, 55, 40, 70, 52, 65, 35, 72, 45, 58, 38, 62],
+        controls: [
+          { label: 'Gain', value: 68 },
+          { label: 'Swing', value: 42 },
+          { label: 'Room', value: 25 }
+        ],
+        tracks: [
+          { name: 'Hip Hop Drum Machine', icon: '🥁', blocks: [0, 1, 2, 3, 4, 5, 6, 7] },
+          { name: 'Snare Accent', icon: '🥁', blocks: [1, 3, 5, 7] },
+          { name: 'Perc Loop', icon: '🥁', blocks: [0, 2, 4, 6] }
+        ]
+      },
+      {
+        id: 'guitar',
+        name: 'Guitar',
+        icon: 'G',
+        badge: 'G',
+        gradient: 'linear-gradient(135deg, rgba(249,115,22,0.32), rgba(251,191,36,0.12))',
+        panelTitle: 'Guitar Controls',
+        panelText: 'Shape tone, add drive, and sketch riffs with quick preset switching.',
+        tone: 'Warm',
+        output: 'Stereo',
+        bars: [26, 48, 62, 36, 72, 58, 40, 66, 52, 74, 44, 57],
+        controls: [
+          { label: 'Gain', value: 68 },
+          { label: 'Reverb', value: 42 },
+          { label: 'Delay', value: 25 }
+        ],
+        tracks: [
+          { name: 'Picked', icon: '🎸', blocks: [0, 2, 4, 6, 7] },
+          { name: 'Classic Clean', icon: '🎸', blocks: [1, 2, 3, 4, 6, 7] },
+          { name: 'Hard Rock', icon: '🎸', blocks: [0, 3, 5, 7] }
+        ]
+      },
+      {
+        id: 'keys',
+        name: 'Keys',
+        icon: 'K',
+        badge: 'K',
+        gradient: 'linear-gradient(135deg, rgba(168,85,247,0.32), rgba(129,140,248,0.12))',
+        panelTitle: 'Keyboard Studio',
+        panelText: 'Layer soft chords, synth textures, and melodic phrases in one place.',
+        tone: 'Dreamy',
+        output: 'Stereo',
+        bars: [42, 60, 38, 74, 48, 67, 32, 58, 76, 45, 63, 40],
+        controls: [
+          { label: 'Chorus', value: 54 },
+          { label: 'Reverb', value: 61 },
+          { label: 'Attack', value: 33 }
+        ],
+        tracks: [
+          { name: 'Ethereal Rhythm', icon: '🎹', blocks: [0, 1, 4, 5] },
+          { name: 'Dream Chords', icon: '🎹', blocks: [1, 3, 4, 6] },
+          { name: 'Lead Keys', icon: '🎹', blocks: [2, 5, 7] }
+        ]
+      },
+      {
+        id: 'vocals',
+        name: 'Vocals',
+        icon: 'V',
+        badge: 'V',
+        gradient: 'linear-gradient(135deg, rgba(14,165,233,0.32), rgba(34,211,238,0.12))',
+        panelTitle: 'Vocal Lane',
+        panelText: 'Track ideas, stack harmonies, and keep voice effects easy to reach.',
+        tone: 'Bright',
+        output: 'Mono',
+        bars: [35, 44, 58, 72, 54, 40, 63, 77, 49, 69, 38, 56],
+        controls: [
+          { label: 'Comp', value: 49 },
+          { label: 'Air', value: 57 },
+          { label: 'Delay', value: 22 }
+        ],
+        tracks: [
+          { name: 'Lead Vocal', icon: '🎤', blocks: [1, 2, 4, 6] },
+          { name: 'Harmony', icon: '🎤', blocks: [2, 4, 6] },
+          { name: 'Ad-libs', icon: '🎤', blocks: [5, 7] }
+        ]
+      },
+      {
+        id: 'mix',
+        name: 'Mixer',
+        icon: 'M',
+        badge: 'M',
+        gradient: 'linear-gradient(135deg, rgba(161,161,170,0.24), rgba(244,244,245,0.08))',
+        panelTitle: 'Mix View',
+        panelText: 'Balance levels, shape space, and keep the session clean while arranging.',
+        tone: 'Neutral',
+        output: 'Master',
+        bars: [28, 36, 54, 66, 44, 59, 72, 51, 39, 62, 47, 70],
+        controls: [
+          { label: 'Bus A', value: 73 },
+          { label: 'Bus B', value: 46 },
+          { label: 'FX', value: 31 }
+        ],
+        tracks: [
+          { name: 'Bus A', icon: '🎚️', blocks: [0, 1, 2, 3, 4, 5, 6, 7] },
+          { name: 'Bus B', icon: '🎚️', blocks: [1, 3, 5, 7] },
+          { name: 'FX Return', icon: '🎚️', blocks: [2, 6] }
+        ]
+      }
+    ];
+
+    const toolList = document.getElementById('toolList');
+    const panelTitle = document.getElementById('panelTitle');
+    const panelText = document.getElementById('panelText');
+    const workspaceBadge = document.getElementById('workspaceBadge');
+    const toneValue = document.getElementById('toneValue');
+    const modeValue = document.getElementById('modeValue');
+    const outputValue = document.getElementById('outputValue');
+    const performanceBars = document.getElementById('performanceBars');
+    const quickControls = document.getElementById('quickControls');
+    const trackSidebar = document.getElementById('trackSidebar');
+    const laneContainer = document.getElementById('laneContainer');
+    const ruler = document.getElementById('ruler');
+
+    let activeToolId = 'guitar';
+
+    function renderRuler() {
+      ruler.innerHTML = '';
+      for (let i = 1; i <= 8; i++) {
+        const measure = document.createElement('div');
+        measure.className = 'measure';
+        measure.innerHTML = `<div>${i}</div><div class="ticks"></div>`;
+        ruler.appendChild(measure);
+      }
+    }
+
+    function renderToolButtons() {
+      toolList.innerHTML = '';
+      tools.forEach((tool) => {
+        const button = document.createElement('button');
+        button.className = 'tool-button' + (tool.id === activeToolId ? ' active' : '');
+        button.innerHTML = `
+          <div class="tool-icon" style="background:${tool.gradient}">${tool.icon}</div>
+          <div>
+            <div class="tool-title">${tool.name}</div>
+            <div class="tool-subtitle">Open tool layout</div>
+          </div>
+        `;
+        button.addEventListener('click', () => {
+          activeToolId = tool.id;
+          render();
+        });
+        toolList.appendChild(button);
+      });
+    }
+
+    function renderPerformanceBars(bars) {
+      performanceBars.innerHTML = '';
+      bars.forEach((height) => {
+        const bar = document.createElement('div');
+        bar.className = 'bar';
+        bar.style.height = `${height}%`;
+        performanceBars.appendChild(bar);
+      });
+    }
+
+    function renderQuickControls(controls) {
+      quickControls.innerHTML = '';
+      controls.forEach((control) => {
+        const row = document.createElement('div');
+        row.className = 'control-row';
+        row.innerHTML = `
+          <div class="control-top">
+            <span>${control.label}</span>
+            <span>${control.value}%</span>
+          </div>
+          <div class="control-track">
+            <div class="control-fill" style="width:${control.value}%"></div>
+          </div>
+        `;
+        quickControls.appendChild(row);
+      });
+    }
+
+    function renderTracks(tracks) {
+      trackSidebar.innerHTML = '';
+      laneContainer.innerHTML = '';
+
+      tracks.forEach((track) => {
+        const row = document.createElement('div');
+        row.className = 'track-row';
+        row.innerHTML = `
+          <div>
+            <div class="track-name">${track.name}</div>
+            <div class="track-controls">
+              <button class="round-btn" aria-label="Mute"></button>
+              <button class="round-btn" aria-label="Headphones"></button>
+              <div class="track-slider"></div>
+            </div>
+          </div>
+          <div class="track-thumb">${track.icon}</div>
+        `;
+        trackSidebar.appendChild(row);
+
+        const laneRow = document.createElement('div');
+        laneRow.className = 'lane-row';
+
+        for (let i = 0; i < 8; i++) {
+          const cell = document.createElement('div');
+          cell.className = 'lane-cell' + (track.blocks.includes(i) ? ' active' : '');
+          cell.innerHTML = `
+            <div class="clip">
+              <div class="clip-notes">
+                <span></span><span></span><span></span><span></span><span></span><span></span>
+              </div>
+              <div class="clip-line"></div>
+            </div>
+          `;
+          laneRow.appendChild(cell);
+        }
+
+        laneContainer.appendChild(laneRow);
+      });
+    }
+
+    function render() {
+      const activeTool = tools.find((tool) => tool.id === activeToolId);
+
+      renderToolButtons();
+      panelTitle.textContent = activeTool.panelTitle;
+      panelText.textContent = activeTool.panelText;
+      workspaceBadge.textContent = activeTool.badge;
+      workspaceBadge.style.background = activeTool.gradient;
+      toneValue.textContent = activeTool.tone;
+      modeValue.textContent = activeTool.name;
+      outputValue.textContent = activeTool.output;
+      renderPerformanceBars(activeTool.bars);
+      renderQuickControls(activeTool.controls);
+      renderTracks(activeTool.tracks);
+    }
+
+    renderRuler();
+    render();
+  </script>
+</body>
+</html>
