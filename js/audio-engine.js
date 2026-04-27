@@ -7,6 +7,7 @@ export class AudioEngine {
     this.activeVoices = [];
     this.previewVoice = null;
     this.previewTool = null;
+    this.stopToken = 0;
   }
 
   getNoteDuration(tool) {
@@ -19,6 +20,15 @@ export class AudioEngine {
 
   getAttackTime(tool) {
     return typeof tool?.attackTime === 'number' ? tool.attackTime : 0.01;
+  }
+
+  getTrackGain(track) {
+    const volume = typeof track?.volume === 'number' ? track.volume : 66;
+    return Math.max(0, Math.min(1, volume / 100));
+  }
+
+  getStackGain(track, stepEventCount) {
+    return this.getTrackGain(track) / Math.max(1, Math.min(stepEventCount, 3));
   }
 
   getEnvelopeOptions(tool, gain) {
@@ -64,10 +74,10 @@ export class AudioEngine {
     return this.instrumentCache.get(cacheKey);
   }
 
-  stopPreviewVoice(tool = null) {
+  stopPreviewVoice(tool = null, releaseTail = this.getReleaseTail(tool || this.previewTool)) {
     const previewTool = tool || this.previewTool;
     if (this.previewVoice && typeof this.previewVoice.stop === 'function') {
-      const stopAt = this.audioContext ? this.audioContext.currentTime + this.getReleaseTail(previewTool) : undefined;
+      const stopAt = this.audioContext ? this.audioContext.currentTime + releaseTail : undefined;
       this.previewVoice.stop(stopAt);
     }
     this.previewVoice = null;
@@ -75,7 +85,7 @@ export class AudioEngine {
   }
 
   stopActiveVoices(releaseTail = 0.08) {
-    this.activeVoices.forEach((voice) => {
+    this.activeVoices.forEach(({ voice }) => {
       if (voice && typeof voice.stop === 'function') {
         const stopAt = this.audioContext ? this.audioContext.currentTime + releaseTail : undefined;
         voice.stop(stopAt);
@@ -84,13 +94,58 @@ export class AudioEngine {
     this.activeVoices = [];
   }
 
+  stopAllVoicesImmediately() {
+    this.stopToken += 1;
+    this.stopActiveVoices(0);
+    this.stopPreviewVoice(null, 0);
+
+    if (this.audioContext && this.audioContext.state === 'running') {
+      this.audioContext.suspend().catch(() => {});
+    }
+  }
+
+  setVoiceGain(voice, gain) {
+    const gainParam = voice?.gain || voice?.output?.gain || voice?.node?.gain;
+    if (!gainParam) {
+      return;
+    }
+
+    if (typeof gainParam.setTargetAtTime === 'function' && this.audioContext) {
+      gainParam.setTargetAtTime(gain, this.audioContext.currentTime, 0.01);
+      return;
+    }
+
+    if (typeof gainParam.setValueAtTime === 'function' && this.audioContext) {
+      gainParam.setValueAtTime(gain, this.audioContext.currentTime);
+      return;
+    }
+
+    if (typeof gainParam.value === 'number') {
+      gainParam.value = gain;
+    }
+  }
+
+  updateActiveTrackVolume(trackId, volume) {
+    const track = { volume };
+    this.activeVoices
+      .filter((entry) => entry.trackId === trackId)
+      .forEach((entry) => {
+        this.setVoiceGain(entry.voice, this.getStackGain(track, entry.stepEventCount));
+      });
+  }
+
   async preloadInstruments(tracks, getTool) {
     await this.ensureAudioContext();
     await Promise.all(tracks.map((track) => this.getInstrument(getTool(track.toolId, track.toneId))));
   }
 
   async previewKey(tool, note) {
+    const playToken = this.stopToken;
     const instrument = await this.getInstrument(tool);
+    if (playToken !== this.stopToken) {
+      return;
+    }
+
     const noteDuration = this.getNoteDuration(tool);
     const releaseTail = this.getReleaseTail(tool);
 
@@ -111,19 +166,32 @@ export class AudioEngine {
     }, Math.ceil((noteDuration + releaseTail + 0.12) * 1000));
   }
 
-  async triggerTrackStep(track, stepEvents, tool) {
+  async triggerTrackStep(track, stepEvents, tool, options = {}) {
     if (!Array.isArray(stepEvents) || stepEvents.length === 0) {
       return;
     }
 
+    const shouldPlay = typeof options.shouldPlay === 'function' ? options.shouldPlay : () => true;
+    if (!shouldPlay()) {
+      return;
+    }
+
     const instrument = await this.getInstrument(tool);
+    if (!shouldPlay()) {
+      return;
+    }
+
     const noteDuration = this.getNoteDuration(tool);
     const releaseTail = this.getReleaseTail(tool);
-    const gain = Math.max(0.15, track.volume / 100) / Math.max(1, Math.min(stepEvents.length, 3));
+    const gain = this.getStackGain(track, stepEvents.length);
 
     stepEvents
       .filter((stepEvent) => stepEvent && typeof stepEvent.note === 'string')
       .forEach((stepEvent) => {
+        if (!shouldPlay()) {
+          return;
+        }
+
         const voice = instrument.play(
           stepEvent.note,
           this.audioContext.currentTime,
@@ -131,9 +199,13 @@ export class AudioEngine {
           this.getEnvelopeOptions(tool, gain)
         );
 
-        this.activeVoices.push(voice);
+        this.activeVoices.push({
+          voice,
+          trackId: track.id,
+          stepEventCount: stepEvents.length
+        });
         window.setTimeout(() => {
-          this.activeVoices = this.activeVoices.filter((entry) => entry !== voice);
+          this.activeVoices = this.activeVoices.filter((entry) => entry.voice !== voice);
         }, Math.ceil((noteDuration + releaseTail + 0.12) * 1000));
       });
   }

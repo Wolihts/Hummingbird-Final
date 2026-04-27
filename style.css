@@ -755,6 +755,10 @@ input {
   border-color: rgba(74, 222, 128, 0.35);
 }
 
+.session-file-input {
+  display: none;
+}
+
 .step-editor {
   position: fixed;
   width: min(360px, calc(100vw - 24px));

@@ -1,5 +1,5 @@
 import { AudioEngine } from './js/audio-engine.js';
-import { createSessionTrack, loadSession, persistSession } from './js/session-storage.js';
+import { createSessionTrack, loadSession, normalizeSession, persistSession } from './js/session-storage.js';
 import { getDefaultToneId, getTonePreset, INITIAL_STEP_COUNT, resolveToolTone, STEP_MS, toolMap, tools } from './js/tools.js';
 
 const toolList = document.getElementById('toolList');
@@ -24,6 +24,9 @@ const shrinkTimelineBtn = document.getElementById('shrinkTimelineBtn');
 const transportStatus = document.getElementById('transportStatus');
 const transportDot = document.getElementById('transportDot');
 const expandTimelineBtn = document.getElementById('expandTimelineBtn');
+const downloadSessionBtn = document.getElementById('downloadSessionBtn');
+const uploadSessionBtn = document.getElementById('uploadSessionBtn');
+const sessionFileInput = document.getElementById('sessionFileInput');
 const stepEditor = document.getElementById('stepEditor');
 const stepEditorTitle = document.getElementById('stepEditorTitle');
 const stepEditorList = document.getElementById('stepEditorList');
@@ -59,8 +62,113 @@ function getSessionSnapshot() {
   };
 }
 
+function applySessionSnapshot(snapshot) {
+  const normalized = normalizeSession(snapshot, toolMap);
+
+  // Imports replace the whole working session so stale tracks cannot linger.
+  activeToolId = toolMap.has(normalized.activeToolId) ? normalized.activeToolId : 'guitar';
+  currentStep = normalized.currentStep;
+  stepCount = normalized.stepCount;
+  selectedToneIds = normalized.selectedToneIds;
+  sessionTracks = normalized.sessionTracks;
+  saveSession();
+  closeStepEditor();
+  renderRuler();
+  render();
+  updatePlayhead();
+}
+
 function saveSession() {
   persistSession(getSessionSnapshot());
+}
+
+function createNoteEntry(note, label = note) {
+  return {
+    note,
+    label
+  };
+}
+
+function getStepStack(stepEvents) {
+  return Array.isArray(stepEvents) ? [...stepEvents] : [];
+}
+
+function createOption(value, text, selected = false) {
+  const option = document.createElement('option');
+  option.value = value;
+  option.textContent = text;
+  option.selected = selected;
+  return option;
+}
+
+function refreshTrackView({ includeRuler = false, includeEditor = true } = {}) {
+  if (includeRuler) {
+    renderRuler();
+  }
+
+  renderTracks(sessionTracks);
+
+  if (includeEditor) {
+    renderStepEditor();
+  }
+}
+
+function getDownloadFileName() {
+  const dateStamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+  return `hummingbird-session-${dateStamp}.hummingbird`;
+}
+
+function downloadSession() {
+  const payload = {
+    app: 'Hummingbird',
+    formatVersion: 1,
+    exportedAt: new Date().toISOString(),
+    ...getSessionSnapshot()
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+
+  link.href = url;
+  link.download = getDownloadFileName();
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  setTransportStatus('Session downloaded');
+}
+
+function isSessionFilePayload(parsed) {
+  return Boolean(
+    parsed
+    && typeof parsed === 'object'
+    && (
+      parsed.app === 'Hummingbird'
+      || Array.isArray(parsed.sessionTracks)
+      || parsed.selectedToneIds
+      || Number.isInteger(parsed.stepCount)
+    )
+  );
+}
+
+async function uploadSessionFile(file) {
+  if (!file) {
+    return;
+  }
+
+  try {
+    const parsed = JSON.parse(await file.text());
+    if (!isSessionFilePayload(parsed)) {
+      throw new Error('Unsupported session file');
+    }
+
+    stopPlayback(false);
+    applySessionSnapshot(parsed);
+    setTransportStatus('Session loaded');
+  } catch (error) {
+    setTransportStatus('Could not load session file');
+    window.alert('That file could not be loaded. Please choose a Hummingbird session file.');
+  }
 }
 
 function getSelectedToneId(toolId) {
@@ -195,11 +303,7 @@ function renderToneSelect(activeTool) {
   const selectedToneId = getSelectedToneId(activeTool.id);
 
   activeTool.tones.forEach((tone) => {
-    const option = document.createElement('option');
-    option.value = tone.id;
-    option.textContent = tone.name;
-    option.selected = tone.id === selectedToneId;
-    toneSelect.appendChild(option);
+    toneSelect.appendChild(createOption(tone.id, tone.name, tone.id === selectedToneId));
   });
 }
 
@@ -215,7 +319,7 @@ function renderInstrumentView(activeTool) {
     </div>
   `;
 
-  keyRange.textContent = `${resolvedTool.keyRange} • Click a key to preview`;
+  keyRange.textContent = `${resolvedTool.keyRange} • Click to preview • Shift-click to add`;
   keysBoard.innerHTML = '';
 
   resolvedTool.keys.forEach((key) => {
@@ -223,8 +327,11 @@ function renderInstrumentView(activeTool) {
     keyElement.type = 'button';
     keyElement.className = `workspace-key ${key.type}${key.active ? ' active' : ''}`;
     keyElement.textContent = key.label;
-    keyElement.addEventListener('click', async () => {
-      placeNoteAtCurrentStep(resolvedTool, key);
+    keyElement.addEventListener('click', async (event) => {
+      if (event.shiftKey) {
+        placeNoteAtCurrentStep(resolvedTool, key);
+      }
+
       await previewKey(resolvedTool, key.note);
     });
     keysBoard.appendChild(keyElement);
@@ -263,20 +370,16 @@ function updateTrackStep(trackId, stepIndex, updateStep) {
   });
 
   saveSession();
-  renderTracks(sessionTracks);
-  renderStepEditor();
+  refreshTrackView();
 }
 
 function addDefaultNoteToStep(trackId, stepIndex) {
   updateTrackStep(trackId, stepIndex, (track, currentStepEvents, index) => {
     const tool = getResolvedTool(track.toolId, track.toneId);
-    const nextStack = Array.isArray(currentStepEvents) ? [...currentStepEvents] : [];
+    const nextStack = getStepStack(currentStepEvents);
     const note = tool.stepNotes[index % tool.stepNotes.length];
 
-    nextStack.push({
-      note,
-      label: note
-    });
+    nextStack.push(createNoteEntry(note));
 
     return nextStack;
   });
@@ -284,7 +387,7 @@ function addDefaultNoteToStep(trackId, stepIndex) {
 
 function removeLastNoteFromStep(trackId, stepIndex) {
   updateTrackStep(trackId, stepIndex, (_track, currentStepEvents) => {
-    const nextStack = Array.isArray(currentStepEvents) ? [...currentStepEvents] : [];
+    const nextStack = getStepStack(currentStepEvents);
     nextStack.pop();
     return nextStack;
   });
@@ -296,33 +399,27 @@ function clearStep(trackId, stepIndex) {
 
 function updateStepNote(trackId, stepIndex, noteIndex, nextNote) {
   updateTrackStep(trackId, stepIndex, (_track, currentStepEvents) => {
-    const nextStack = Array.isArray(currentStepEvents) ? [...currentStepEvents] : [];
+    const nextStack = getStepStack(currentStepEvents);
     if (!nextStack[noteIndex]) {
       return nextStack;
     }
 
-    nextStack[noteIndex] = {
-      note: nextNote.note,
-      label: nextNote.label
-    };
+    nextStack[noteIndex] = createNoteEntry(nextNote.note, nextNote.label);
     return nextStack;
   });
 }
 
 function addSpecificNoteToStep(trackId, stepIndex, key) {
   updateTrackStep(trackId, stepIndex, (_track, currentStepEvents) => {
-    const nextStack = Array.isArray(currentStepEvents) ? [...currentStepEvents] : [];
-    nextStack.push({
-      note: key.note,
-      label: key.label
-    });
+    const nextStack = getStepStack(currentStepEvents);
+    nextStack.push(createNoteEntry(key.note, key.label));
     return nextStack;
   });
 }
 
 function removeNoteAtIndex(trackId, stepIndex, noteIndex) {
   updateTrackStep(trackId, stepIndex, (_track, currentStepEvents) => {
-    const nextStack = Array.isArray(currentStepEvents) ? [...currentStepEvents] : [];
+    const nextStack = getStepStack(currentStepEvents);
     nextStack.splice(noteIndex, 1);
     return nextStack;
   });
@@ -337,11 +434,8 @@ function placeNoteAtCurrentStep(tool, key) {
     }
 
     const nextSteps = [...track.steps];
-    const currentStack = Array.isArray(nextSteps[currentStep]) ? [...nextSteps[currentStep]] : [];
-    currentStack.push({
-      note: key.note,
-      label: key.label
-    });
+    const currentStack = getStepStack(nextSteps[currentStep]);
+    currentStack.push(createNoteEntry(key.note, key.label));
     nextSteps[currentStep] = currentStack;
 
     return {
@@ -351,13 +445,17 @@ function placeNoteAtCurrentStep(tool, key) {
   });
 
   saveSession();
-  renderTracks(sessionTracks);
+  refreshTrackView({ includeEditor: false });
 }
 
 function closeStepEditor() {
   stepEditorState = null;
-  stepEditor.classList.add('hidden');
-  stepEditor.setAttribute('aria-hidden', 'true');
+  setStepEditorVisible(false);
+}
+
+function setStepEditorVisible(isVisible) {
+  stepEditor.classList.toggle('hidden', !isVisible);
+  stepEditor.setAttribute('aria-hidden', String(!isVisible));
 }
 
 function positionStepEditor(anchorRect) {
@@ -382,9 +480,7 @@ function expandTimeline(stepDelta) {
     ]
   }));
   saveSession();
-  renderRuler();
-  renderTracks(sessionTracks);
-  renderStepEditor();
+  refreshTrackView({ includeRuler: true });
 }
 
 function countNotesBeyondStep(limitStep) {
@@ -402,9 +498,7 @@ function shrinkTimeline(stepDelta) {
   stepCount = nextStepCount;
   currentStep = Math.min(currentStep, stepCount - 1);
   saveSession();
-  renderRuler();
-  renderTracks(sessionTracks);
-  renderStepEditor();
+  refreshTrackView({ includeRuler: true });
 }
 
 function requestTimelineExpansion() {
@@ -486,10 +580,7 @@ function renderStepEditor() {
   stepEditorSelect.innerHTML = '';
 
   tool.keys.forEach((key) => {
-    const option = document.createElement('option');
-    option.value = key.note;
-    option.textContent = `${key.label} (${key.note})`;
-    stepEditorSelect.appendChild(option);
+    stepEditorSelect.appendChild(createOption(key.note, `${key.label} (${key.note})`));
   });
 
   step.forEach((entry, noteIndex) => {
@@ -499,11 +590,7 @@ function renderStepEditor() {
     const select = document.createElement('select');
     select.className = 'step-editor-select';
     tool.keys.forEach((key) => {
-      const option = document.createElement('option');
-      option.value = key.note;
-      option.textContent = `${key.label} (${key.note})`;
-      option.selected = key.note === entry.note;
-      select.appendChild(option);
+      select.appendChild(createOption(key.note, `${key.label} (${key.note})`, key.note === entry.note));
     });
     select.addEventListener('change', (event) => {
       const selectedKey = tool.keys.find((key) => key.note === event.currentTarget.value);
@@ -526,14 +613,15 @@ function renderStepEditor() {
   });
 
   positionStepEditor(stepEditorState.anchorRect);
-  stepEditor.classList.remove('hidden');
-  stepEditor.setAttribute('aria-hidden', 'false');
+  setStepEditorVisible(true);
 }
 
 function updateTrackVolume(trackId, value) {
+  const volume = Math.max(0, Math.min(100, Number(value)));
   sessionTracks = sessionTracks.map((track) => (
-    track.id === trackId ? { ...track, volume: Number(value) } : track
+    track.id === trackId ? { ...track, volume } : track
   ));
+  audioEngine.updateActiveTrackVolume(trackId, volume);
   saveSession();
 }
 
@@ -542,7 +630,7 @@ function toggleTrackMute(trackId) {
     track.id === trackId ? { ...track, muted: !track.muted } : track
   ));
   saveSession();
-  renderTracks(sessionTracks);
+  refreshTrackView({ includeEditor: false });
 }
 
 function toggleTrackSolo(trackId) {
@@ -550,7 +638,7 @@ function toggleTrackSolo(trackId) {
     track.id === trackId ? { ...track, solo: !track.solo } : track
   ));
   saveSession();
-  renderTracks(sessionTracks);
+  refreshTrackView({ includeEditor: false });
 }
 
 function getAudibleTracks() {
@@ -560,6 +648,93 @@ function getAudibleTracks() {
   }
 
   return sessionTracks.filter((track) => !track.muted);
+}
+
+function createTrackRow(track, tool) {
+  const row = document.createElement('div');
+  row.className = 'track-row';
+  row.style.setProperty('--track-accent', tool ? tool.clipLine : '#4ade80');
+  row.innerHTML = `
+    <div class="track-info">
+      <div class="track-name">${track.name}</div>
+      <div class="track-controls">
+        <button class="round-btn${track.muted ? ' active' : ''}" type="button" aria-label="Mute">M</button>
+        <button class="round-btn${track.solo ? ' active solo' : ''}" type="button" aria-label="Solo">S</button>
+        <input class="track-slider" type="range" min="0" max="100" value="${track.volume}" aria-label="${track.name} volume" />
+      </div>
+    </div>
+    <div class="track-thumb">${track.icon}</div>
+  `;
+
+  const slider = row.querySelector('.track-slider');
+  slider.style.background = getSliderFill(track.volume);
+  slider.addEventListener('input', (event) => {
+    const { value } = event.currentTarget;
+    event.currentTarget.style.background = getSliderFill(value);
+    updateTrackVolume(track.id, value);
+  });
+
+  const [muteBtn, soloBtn] = row.querySelectorAll('.round-btn');
+  muteBtn.addEventListener('click', () => {
+    toggleTrackMute(track.id);
+  });
+  soloBtn.addEventListener('click', () => {
+    toggleTrackSolo(track.id);
+  });
+
+  return row;
+}
+
+function createLaneCell(track, stepIndex) {
+  const cell = document.createElement('button');
+  cell.type = 'button';
+  const stepEvent = track.steps[stepIndex];
+  cell.className = `lane-cell${hasStepEvents(stepEvent) ? ' active' : ''}`;
+  cell.dataset.step = String(stepIndex);
+  cell.setAttribute('aria-label', `${track.name} step ${stepIndex + 1}`);
+  cell.title = 'Click to add note, right-click to remove last, Shift-click to clear';
+  cell.innerHTML = createClipMarkup();
+
+  const clipLabel = cell.querySelector('.clip-label');
+  if (hasStepEvents(stepEvent)) {
+    clipLabel.textContent = buildStepLabel(stepEvent);
+  }
+
+  cell.addEventListener('click', (event) => {
+    if (event.shiftKey) {
+      clearStep(track.id, stepIndex);
+      return;
+    }
+
+    if (hasStepEvents(stepEvent) && stepEvent.length > 1) {
+      openStepEditor(track.id, stepIndex, cell);
+      return;
+    }
+
+    addDefaultNoteToStep(track.id, stepIndex);
+  });
+
+  cell.addEventListener('contextmenu', (event) => {
+    event.preventDefault();
+    removeLastNoteFromStep(track.id, stepIndex);
+  });
+
+  return cell;
+}
+
+function createLaneRow(track, tool) {
+  const laneRow = document.createElement('div');
+  laneRow.className = 'lane-row';
+  laneRow.dataset.trackId = track.id;
+  laneRow.style.setProperty('--track-clip', tool ? tool.clipFill : 'rgba(74, 222, 128, 0.24)');
+  laneRow.style.setProperty('--track-line', tool ? tool.clipLine : '#4ade80');
+  laneRow.style.gridTemplateColumns = `repeat(${stepCount}, minmax(90px, 1fr))`;
+
+  for (let i = 0; i < stepCount; i += 1) {
+    laneRow.appendChild(createLaneCell(track, i));
+  }
+
+  return laneRow;
 }
 
 function renderTracks(tracks) {
@@ -573,83 +748,8 @@ function renderTracks(tracks) {
 
   tracks.forEach((track) => {
     const tool = getResolvedTool(track.toolId, track.toneId);
-    const row = document.createElement('div');
-    row.className = 'track-row';
-    row.style.setProperty('--track-accent', tool ? tool.clipLine : '#4ade80');
-    row.innerHTML = `
-      <div class="track-info">
-        <div class="track-name">${track.name}</div>
-        <div class="track-controls">
-          <button class="round-btn${track.muted ? ' active' : ''}" type="button" aria-label="Mute">M</button>
-          <button class="round-btn${track.solo ? ' active solo' : ''}" type="button" aria-label="Solo">S</button>
-          <input class="track-slider" type="range" min="0" max="100" value="${track.volume}" aria-label="${track.name} volume" />
-        </div>
-      </div>
-      <div class="track-thumb">${track.icon}</div>
-    `;
-    trackSidebar.appendChild(row);
-
-    const slider = row.querySelector('.track-slider');
-    slider.style.background = getSliderFill(track.volume);
-    slider.addEventListener('input', (event) => {
-      const { value } = event.currentTarget;
-      event.currentTarget.style.background = getSliderFill(value);
-      updateTrackVolume(track.id, value);
-    });
-
-    const [muteBtn, soloBtn] = row.querySelectorAll('.round-btn');
-    muteBtn.addEventListener('click', () => {
-      toggleTrackMute(track.id);
-    });
-    soloBtn.addEventListener('click', () => {
-      toggleTrackSolo(track.id);
-    });
-
-    const laneRow = document.createElement('div');
-    laneRow.className = 'lane-row';
-    laneRow.dataset.trackId = track.id;
-    laneRow.style.setProperty('--track-clip', tool ? tool.clipFill : 'rgba(74, 222, 128, 0.24)');
-    laneRow.style.setProperty('--track-line', tool ? tool.clipLine : '#4ade80');
-
-    laneRow.style.gridTemplateColumns = `repeat(${stepCount}, minmax(90px, 1fr))`;
-
-    for (let i = 0; i < stepCount; i += 1) {
-      const cell = document.createElement('button');
-      cell.type = 'button';
-      const stepEvent = track.steps[i];
-      cell.className = `lane-cell${hasStepEvents(stepEvent) ? ' active' : ''}`;
-      cell.dataset.step = String(i);
-      cell.setAttribute('aria-label', `${track.name} step ${i + 1}`);
-      cell.title = 'Click to add note, right-click to remove last, Shift-click to clear';
-      cell.innerHTML = createClipMarkup();
-
-      const clipLabel = cell.querySelector('.clip-label');
-      if (hasStepEvents(stepEvent)) {
-        clipLabel.textContent = buildStepLabel(stepEvent);
-      }
-
-      cell.addEventListener('click', (event) => {
-        if (event.shiftKey) {
-          clearStep(track.id, i);
-          return;
-        }
-
-        if (hasStepEvents(stepEvent) && stepEvent.length > 1) {
-          openStepEditor(track.id, i, cell);
-          return;
-        }
-
-        addDefaultNoteToStep(track.id, i);
-      });
-
-      cell.addEventListener('contextmenu', (event) => {
-        event.preventDefault();
-        removeLastNoteFromStep(track.id, i);
-      });
-      laneRow.appendChild(cell);
-    }
-
-    laneContainer.appendChild(laneRow);
+    trackSidebar.appendChild(createTrackRow(track, tool));
+    laneContainer.appendChild(createLaneRow(track, tool));
   });
 
   updatePlayhead();
@@ -760,7 +860,14 @@ async function playCurrentStep(runId = playbackRunId) {
 
   const tracksToPlay = getAudibleTracks().filter((track) => hasStepEvents(track.steps[currentStep]));
   await Promise.all(
-    tracksToPlay.map((track) => audioEngine.triggerTrackStep(track, track.steps[currentStep], getResolvedTool(track.toolId, track.toneId)))
+    tracksToPlay.map((track) => audioEngine.triggerTrackStep(
+      track,
+      track.steps[currentStep],
+      getResolvedTool(track.toolId, track.toneId),
+      {
+        shouldPlay: () => isPlaying && runId === playbackRunId
+      }
+    ))
   );
 
   if (!isPlaying || runId !== playbackRunId) {
@@ -818,8 +925,7 @@ function stopPlayback(resetStep = true) {
     transportTimer = null;
   }
 
-  audioEngine.stopActiveVoices(getGlobalReleaseTail());
-  audioEngine.stopPreviewVoice();
+  audioEngine.stopAllVoicesImmediately();
   playBtn.setAttribute('aria-label', 'Play timeline');
   playBtn.setAttribute('title', 'Play timeline');
   setTransportStatus(sessionTracks.length > 0 ? 'Session Idle' : 'Add an instrument');
@@ -898,6 +1004,20 @@ shrinkTimelineBtn.addEventListener('click', () => {
 
 expandTimelineBtn.addEventListener('click', () => {
   requestTimelineExpansion();
+});
+
+downloadSessionBtn.addEventListener('click', () => {
+  downloadSession();
+});
+
+uploadSessionBtn.addEventListener('click', () => {
+  sessionFileInput.click();
+});
+
+sessionFileInput.addEventListener('change', async (event) => {
+  const [file] = event.currentTarget.files;
+  await uploadSessionFile(file);
+  event.currentTarget.value = '';
 });
 
 document.addEventListener('click', (event) => {
