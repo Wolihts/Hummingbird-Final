@@ -1,10 +1,4 @@
-import { getDefaultToneId, INITIAL_STEP_COUNT, STEP_MS, STORAGE_KEY } from './tools.js';
-
-const DEFAULT_BPM = Math.round(60000 / STEP_MS);
-
-function normalizeTempoBpm(value) {
-  return Number.isFinite(value) ? Math.max(60, Math.min(180, Math.round(value))) : DEFAULT_BPM;
-}
+import { getDefaultToneId, INITIAL_STEP_COUNT, STORAGE_KEY } from './tools.js';
 
 export function createSessionTrack(tool, stepCount = INITIAL_STEP_COUNT, toneId = getDefaultToneId(tool)) {
   return {
@@ -25,8 +19,6 @@ function createEmptySession(toolMap) {
     activeToolId: null,
     currentStep: 0,
     stepCount: INITIAL_STEP_COUNT,
-    tempoBpm: DEFAULT_BPM,
-    metronomeEnabled: false,
     selectedToneIds: normalizeSelectedToneIds(null, toolMap),
     sessionTracks: []
   };
@@ -197,8 +189,6 @@ export function normalizeSession(parsed, toolMap) {
       activeToolId: typeof parsed.activeToolId === 'string' ? parsed.activeToolId : null,
       currentStep: Number.isInteger(parsed.currentStep) ? Math.max(0, Math.min(stepCount - 1, parsed.currentStep)) : 0,
       stepCount,
-      tempoBpm: normalizeTempoBpm(parsed.tempoBpm),
-      metronomeEnabled: Boolean(parsed.metronomeEnabled),
       selectedToneIds,
       sessionTracks
     };

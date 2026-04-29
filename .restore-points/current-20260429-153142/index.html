@@ -62,20 +62,13 @@
         <div class="transport">
           <div class="transport-dot" id="transportDot"></div>
           <button class="transport-btn transport-icon-btn" id="rewindBtn" type="button" aria-label="Rewind timeline" title="Rewind timeline">|&lt;</button>
-          <button class="transport-btn transport-icon-btn" id="recordBtn" type="button" aria-label="Toggle record mode" title="Record mode">R</button>
-          <button class="transport-btn transport-icon-btn" id="metronomeBtn" type="button" aria-label="Toggle metronome" title="Metronome">M</button>
           <button class="transport-btn transport-btn-primary transport-icon-btn" id="playBtn" type="button" aria-label="Play timeline" title="Play timeline">&#9654;</button>
           <button class="transport-btn transport-icon-btn" id="stopBtn" type="button" aria-label="Stop playback" title="Stop playback">&#9632;</button>
-          <label class="tempo-control" aria-label="Tempo control">
-            <span>BPM</span>
-            <input class="tempo-slider" id="tempoSlider" type="range" min="60" max="180" step="1" value="143" />
-            <span id="tempoValue">143</span>
-          </label>
           <button class="transport-btn transport-icon-btn" id="shrinkTimelineBtn" type="button" aria-label="Shrink timeline" title="Shrink timeline">−</button>
           <button class="transport-btn transport-icon-btn" id="expandTimelineBtn" type="button" aria-label="Expand timeline" title="Expand timeline">+</button>
           <button class="transport-btn transport-icon-btn" id="downloadSessionBtn" type="button" aria-label="Download session" title="Download session">&#8681;</button>
           <button class="transport-btn transport-icon-btn" id="uploadSessionBtn" type="button" aria-label="Upload session" title="Upload session">&#8679;</button>
-          <input class="session-file-input" id="sessionFileInput" type="file" accept=".hummingbird,application/json,.json" aria-label="Upload session file" />
+          <input class="session-file-input" id="sessionFileInput" type="file" accept="application/json,.json,.hummingbird" aria-label="Upload session file" />
           <span class="transport-label" id="transportStatus">Session Idle</span>
         </div>
       </div>

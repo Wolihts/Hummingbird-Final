@@ -18,11 +18,7 @@ const ruler = document.getElementById('ruler');
 const playhead = document.querySelector('.playhead');
 const timelineScroll = document.querySelector('.timeline-scroll');
 const playBtn = document.getElementById('playBtn');
-const recordBtn = document.getElementById('recordBtn');
-const metronomeBtn = document.getElementById('metronomeBtn');
 const stopBtn = document.getElementById('stopBtn');
-const tempoSlider = document.getElementById('tempoSlider');
-const tempoValue = document.getElementById('tempoValue');
 const rewindBtn = document.getElementById('rewindBtn');
 const shrinkTimelineBtn = document.getElementById('shrinkTimelineBtn');
 const transportStatus = document.getElementById('transportStatus');
@@ -40,44 +36,18 @@ const stepEditorClose = document.getElementById('stepEditorClose');
 
 const audioEngine = new AudioEngine();
 const initialSession = loadSession(toolMap);
-const DEFAULT_BPM = Math.round(60000 / STEP_MS);
 
 let activeToolId = toolMap.has(initialSession.activeToolId) ? initialSession.activeToolId : 'guitar';
 let sessionTracks = initialSession.sessionTracks;
 let currentStep = initialSession.currentStep;
 let stepCount = initialSession.stepCount;
 let selectedToneIds = initialSession.selectedToneIds;
-let tempoBpm = initialSession.tempoBpm;
-let metronomeEnabled = initialSession.metronomeEnabled;
-let isRecording = false;
 let isPlaying = false;
 let transportTimer = null;
-let playheadAnimationFrame = null;
 let nextPlaybackTickAt = 0;
 let playbackRunId = 0;
-let visualStepIndex = currentStep;
-let visualStepStartedAt = 0;
 let isDraggingPlayhead = false;
 let stepEditorState = null;
-const keyboardBindings = ['KeyA', 'KeyW', 'KeyS', 'KeyE', 'KeyD', 'KeyF', 'KeyT', 'KeyG', 'KeyY', 'KeyH', 'KeyU', 'KeyJ', 'KeyK', 'KeyO', 'KeyL', 'KeyP', 'Semicolon', 'Quote', 'KeyZ', 'KeyX', 'KeyC', 'KeyV', 'KeyB', 'KeyN'];
-const pressedKeyboardBindings = new Set();
-const whiteNoteNames = new Set(['C', 'D', 'E', 'F', 'G', 'A', 'B']);
-const whiteKeyOffsetByNote = {
-  C: 1,
-  D: 3,
-  E: 5,
-  F: 7,
-  G: 9,
-  A: 11,
-  B: 13
-};
-const blackKeyOffsetByNote = {
-  'C#': 2,
-  'D#': 4,
-  'F#': 8,
-  'G#': 10,
-  'A#': 12
-};
 
 function getTool(toolId) {
   return toolMap.get(toolId);
@@ -88,8 +58,6 @@ function getSessionSnapshot() {
     activeToolId,
     currentStep,
     stepCount,
-    tempoBpm,
-    metronomeEnabled,
     selectedToneIds,
     sessionTracks
   };
@@ -102,14 +70,11 @@ function applySessionSnapshot(snapshot) {
   activeToolId = toolMap.has(normalized.activeToolId) ? normalized.activeToolId : 'guitar';
   currentStep = normalized.currentStep;
   stepCount = normalized.stepCount;
-  tempoBpm = normalized.tempoBpm;
-  metronomeEnabled = normalized.metronomeEnabled;
   selectedToneIds = normalized.selectedToneIds;
   sessionTracks = normalized.sessionTracks;
   saveSession();
   closeStepEditor();
   renderRuler();
-  syncTransportControls();
   render();
   updatePlayhead();
 }
@@ -181,32 +146,15 @@ function refreshTrackView({ includeRuler = false, includeEditor = true } = {}) {
 
 function getDownloadFileName() {
   const dateStamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
-  const trackSlug = sessionTracks.length === 1 ? sessionTracks[0].toolId : `${sessionTracks.length}-tracks`;
-  return `hummingbird-${trackSlug}-${tempoBpm}bpm-${dateStamp}.hummingbird`;
-}
-
-function getSessionSummary(snapshot = getSessionSnapshot()) {
-  const noteCount = snapshot.sessionTracks.reduce((total, track) => (
-    total + track.steps.reduce((trackTotal, step) => trackTotal + (Array.isArray(step) ? step.length : 0), 0)
-  ), 0);
-
-  return {
-    tracks: snapshot.sessionTracks.length,
-    notes: noteCount,
-    steps: snapshot.stepCount,
-    tempoBpm: snapshot.tempoBpm,
-    activeToolId: snapshot.activeToolId
-  };
+  return `hummingbird-session-${dateStamp}.hummingbird`;
 }
 
 function downloadSession() {
-  const snapshot = getSessionSnapshot();
   const payload = {
     app: 'Hummingbird',
-    formatVersion: 2,
+    formatVersion: 1,
     exportedAt: new Date().toISOString(),
-    summary: getSessionSummary(snapshot),
-    ...snapshot
+    ...getSessionSnapshot()
   };
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -218,75 +166,20 @@ function downloadSession() {
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
-  setTransportStatus(`Downloaded ${payload.summary.tracks} track session`);
+  setTransportStatus('Session downloaded');
 }
 
-function downloadSessionBackup(reason = 'backup') {
-  const snapshot = getSessionSnapshot();
-  const payload = {
-    app: 'Hummingbird',
-    formatVersion: 2,
-    exportedAt: new Date().toISOString(),
-    backupReason: reason,
-    summary: getSessionSummary(snapshot),
-    ...snapshot
-  };
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-
-  link.href = url;
-  link.download = `hummingbird-${reason}-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.hummingbird`;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
-}
-
-function validateSessionFile(file) {
-  if (!file) {
-    return 'No file selected.';
-  }
-
-  const allowedExtension = /\.(hummingbird|json)$/i.test(file.name);
-  if (!allowedExtension) {
-    return 'Choose a .hummingbird or .json session file.';
-  }
-
-  if (file.size > 1024 * 1024) {
-    return 'Session files must be smaller than 1 MB.';
-  }
-
-  return '';
-}
-
-function getSessionPayloadError(parsed) {
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    return 'The file does not contain a session object.';
-  }
-
-  if (parsed.app && parsed.app !== 'Hummingbird') {
-    return 'This file was exported by a different app.';
-  }
-
-  const hasSessionShape = Array.isArray(parsed.sessionTracks)
-    || parsed.selectedToneIds
-    || Number.isInteger(parsed.stepCount);
-  if (!hasSessionShape) {
-    return 'The file is missing Hummingbird session data.';
-  }
-
-  return '';
-}
-
-function describeSessionImport(parsed) {
-  const normalized = normalizeSession(parsed, toolMap);
-  const summary = getSessionSummary(normalized);
-  return {
-    normalized,
-    summary,
-    message: `Load ${summary.tracks} track(s), ${summary.notes} note(s), ${summary.steps} steps at ${summary.tempoBpm} BPM? This replaces the current session.`
-  };
+function isSessionFilePayload(parsed) {
+  return Boolean(
+    parsed
+    && typeof parsed === 'object'
+    && (
+      parsed.app === 'Hummingbird'
+      || Array.isArray(parsed.sessionTracks)
+      || parsed.selectedToneIds
+      || Number.isInteger(parsed.stepCount)
+    )
+  );
 }
 
 async function uploadSessionFile(file) {
@@ -295,33 +188,17 @@ async function uploadSessionFile(file) {
   }
 
   try {
-    const fileError = validateSessionFile(file);
-    if (fileError) {
-      throw new Error(fileError);
-    }
-
     const parsed = JSON.parse(await file.text());
-    const payloadError = getSessionPayloadError(parsed);
-    if (payloadError) {
-      throw new Error(payloadError);
-    }
-
-    const importPreview = describeSessionImport(parsed);
-    if (!window.confirm(importPreview.message)) {
-      setTransportStatus('Import canceled');
-      return;
-    }
-
-    if (sessionTracks.length > 0 && window.confirm('Download a backup of the current session before importing?')) {
-      downloadSessionBackup('pre-import-backup');
+    if (!isSessionFilePayload(parsed)) {
+      throw new Error('Unsupported session file');
     }
 
     stopPlayback(false);
-    applySessionSnapshot(importPreview.normalized);
-    setTransportStatus(`Loaded ${importPreview.summary.tracks} track session`);
+    applySessionSnapshot(parsed);
+    setTransportStatus('Session loaded');
   } catch (error) {
     setTransportStatus('Could not load session file');
-    window.alert(error instanceof Error ? error.message : 'That file could not be loaded.');
+    window.alert('That file could not be loaded. Please choose a Hummingbird session file.');
   }
 }
 
@@ -340,106 +217,6 @@ function addToolToSession(tool) {
   }
 
   sessionTracks = [...sessionTracks, createSessionTrack(tool, stepCount, getSelectedToneId(tool.id))];
-  saveSession();
-}
-
-function isTypingTarget(target) {
-  return Boolean(
-    target?.closest?.('input, select, textarea, button, [contenteditable="true"]')
-  );
-}
-
-function getKeyboardBindingLabel(code) {
-  const labels = {
-    Semicolon: ';',
-    Quote: "'"
-  };
-
-  if (labels[code]) {
-    return labels[code];
-  }
-
-  if (code.startsWith('Key')) {
-    return code.slice(3);
-  }
-
-  return code;
-}
-
-function getNoteName(note) {
-  const match = String(note || '').match(/^[A-G]#?/);
-  return match ? match[0] : '';
-}
-
-function getKeyboardLayoutMode(tool) {
-  if (tool.id === 'keys') {
-    return 'piano';
-  }
-
-  if (tool.id === 'drums' || tool.id === 'vocals' || tool.id === 'sampler') {
-    return 'pads';
-  }
-
-  return 'strings';
-}
-
-function getPianoKeyStyle(key, keyIndex) {
-  const noteName = getNoteName(key.note);
-  const octaveIndex = Math.floor(keyIndex / 12);
-  const keyOffset = whiteNoteNames.has(noteName)
-    ? whiteKeyOffsetByNote[noteName]
-    : blackKeyOffsetByNote[noteName];
-
-  if (!Number.isFinite(keyOffset)) {
-    return '';
-  }
-
-  const gridColumn = (octaveIndex * 14) + keyOffset;
-  return `grid-column:${gridColumn} / span 2;`;
-}
-
-function clampTempo(value) {
-  const bpm = Number(value);
-  if (!Number.isFinite(bpm)) {
-    return DEFAULT_BPM;
-  }
-
-  return Math.max(60, Math.min(180, Math.round(bpm)));
-}
-
-function getStepMs() {
-  return 60000 / tempoBpm;
-}
-
-function syncTransportControls() {
-  tempoSlider.value = String(tempoBpm);
-  tempoValue.textContent = String(tempoBpm);
-  recordBtn.classList.toggle('active', isRecording);
-  metronomeBtn.classList.toggle('active', metronomeEnabled);
-  recordBtn.setAttribute('aria-pressed', String(isRecording));
-  metronomeBtn.setAttribute('aria-pressed', String(metronomeEnabled));
-}
-
-function updateTempo(value) {
-  tempoBpm = clampTempo(value);
-  syncTransportControls();
-  saveSession();
-
-  if (isPlaying) {
-    visualStepStartedAt = window.performance.now();
-    nextPlaybackTickAt = window.performance.now() + getStepMs();
-  }
-}
-
-function toggleRecordMode() {
-  isRecording = !isRecording;
-  syncTransportControls();
-  setTransportStatus(isRecording ? (isPlaying ? 'Recording' : 'Record Ready') : (isPlaying ? 'Playing' : 'Session Idle'), isPlaying);
-}
-
-function toggleMetronome() {
-  metronomeEnabled = !metronomeEnabled;
-  syncTransportControls();
   saveSession();
 }
 
@@ -514,11 +291,8 @@ function renderToolButtons() {
 
 function createClipMarkup() {
   return `
-      <div class="clip">
-      <div class="clip-head">
-        <div class="clip-label"></div>
-        <div class="clip-count"></div>
-      </div>
+    <div class="clip">
+      <div class="clip-label"></div>
       <div class="clip-notes">
         <span></span><span></span><span></span><span></span><span></span><span></span>
       </div>
@@ -597,51 +371,26 @@ function renderToneSelect(activeTool) {
 
 function renderInstrumentView(activeTool) {
   const resolvedTool = getResolvedTool(activeTool.id);
-  const activeTrack = sessionTracks.find((track) => track.toolId === activeTool.id);
-  const focusKeys = resolvedTool.keys.filter((key) => key.active).map((key) => key.label);
-  const focusKeyText = focusKeys.length > 0 ? focusKeys.join(' / ') : resolvedTool.keys[0]?.label || 'None';
-  const layoutMode = getKeyboardLayoutMode(activeTool);
-  const playableLabel = layoutMode === 'piano' ? 'keyboard plays piano' : layoutMode === 'strings' ? 'keyboard plays strings' : 'keyboard plays pads';
   instrumentStage.innerHTML = `
     <div class="instrument-hero" style="background:${resolvedTool.gradient}">
       <div class="instrument-glyph">${resolvedTool.instrumentGlyph}</div>
       <div>
         <div class="instrument-name">${resolvedTool.instrumentLabel}</div>
-        <div class="instrument-meta">${resolvedTool.tone} sound</div>
-        <div class="instrument-current">${activeTrack ? `${activeTrack.volume}% track volume` : 'Preview workspace'}</div>
+        <div class="instrument-meta">${resolvedTool.tone} tone</div>
       </div>
     </div>
   `;
 
-  keyRange.textContent = `${resolvedTool.keyRange} / Focus: ${focusKeyText} / ${playableLabel} / Shift adds to step ${currentStep + 1}`;
+  keyRange.textContent = `${resolvedTool.keyRange} • Click to preview • Shift-click to add`;
   keysBoard.innerHTML = '';
-  keysBoard.className = `keys-board ${layoutMode}-layout`;
 
-  resolvedTool.keys.forEach((key, keyIndex) => {
-    const bindingCode = keyboardBindings[keyIndex];
+  resolvedTool.keys.forEach((key) => {
     const keyElement = document.createElement('button');
     keyElement.type = 'button';
-    keyElement.tabIndex = -1;
     keyElement.className = `workspace-key ${key.type}${key.active ? ' active' : ''}`;
-    keyElement.dataset.keyIndex = String(keyIndex + 1);
-    if (bindingCode) {
-      keyElement.dataset.binding = bindingCode;
-    }
-    if (layoutMode === 'piano') {
-      const pianoStyle = getPianoKeyStyle(key, keyIndex);
-      if (pianoStyle) {
-        keyElement.setAttribute('style', pianoStyle);
-      }
-    }
-    keyElement.innerHTML = `
-      <span class="workspace-key-index">${String(keyIndex + 1).padStart(2, '0')}</span>
-      ${bindingCode ? `<span class="workspace-key-binding">${getKeyboardBindingLabel(bindingCode)}</span>` : ''}
-      <span class="workspace-key-label">${key.label}</span>
-      <span class="workspace-key-note">${key.note || ''}</span>
-    `;
+    keyElement.textContent = key.label;
     keyElement.addEventListener('click', async (event) => {
-      keyElement.blur();
-      if (event.shiftKey || isRecording) {
+      if (event.shiftKey) {
         placeNoteAtCurrentStep(resolvedTool, key);
       }
 
@@ -979,26 +728,11 @@ function getAudibleTracks() {
 
 function createTrackRow(track, tool) {
   const row = document.createElement('div');
-  const noteCount = track.steps.reduce((total, step) => total + (Array.isArray(step) ? step.length : 0), 0);
-  const isActiveTrack = track.toolId === activeToolId;
-  const stateClasses = [
-    isActiveTrack ? 'active-track' : '',
-    isRecording && isActiveTrack ? 'record-armed' : '',
-    track.muted ? 'muted-track' : '',
-    track.solo ? 'solo-track' : '',
-  ].filter(Boolean).join(' ');
-  const trackState = track.muted ? 'Muted' : track.solo ? 'Solo' : isActiveTrack ? 'Live' : 'Ready';
-  row.className = `track-row${stateClasses ? ` ${stateClasses}` : ''}`;
+  row.className = 'track-row';
   row.style.setProperty('--track-accent', tool ? tool.clipLine : '#4ade80');
   row.innerHTML = `
     <div class="track-info">
-      <div class="track-title-row">
-        <div>
-          <div class="track-name">${track.name}</div>
-          <div class="track-meta">${tool.tone} / ${noteCount} note${noteCount === 1 ? '' : 's'} / ${trackState}</div>
-        </div>
-        ${isActiveTrack || track.muted || track.solo ? `<span class="track-pill">${trackState}</span>` : ''}
-      </div>
+      <div class="track-name">${track.name}</div>
       <div class="track-controls">
         <button class="round-btn${track.muted ? ' active' : ''}" type="button" aria-label="Mute">M</button>
         <button class="round-btn${track.solo ? ' active solo' : ''}" type="button" aria-label="Solo">S</button>
@@ -1041,10 +775,8 @@ function createLaneCell(track, stepIndex) {
   cell.innerHTML = createClipMarkup();
 
   const clipLabel = cell.querySelector('.clip-label');
-  const clipCount = cell.querySelector('.clip-count');
   if (hasStepEvents(stepEvent)) {
     clipLabel.textContent = buildStepLabel(stepEvent);
-    clipCount.textContent = stepEvent.length > 1 ? `${stepEvent.length}x` : '';
   }
 
   cell.addEventListener('click', (event) => {
@@ -1071,13 +803,7 @@ function createLaneCell(track, stepIndex) {
 
 function createLaneRow(track, tool) {
   const laneRow = document.createElement('div');
-  const isActiveTrack = track.toolId === activeToolId;
-  const stateClasses = [
-    isActiveTrack ? 'active-track' : '',
-    track.muted ? 'muted-track' : '',
-    track.solo ? 'solo-track' : '',
-  ].filter(Boolean).join(' ');
-  laneRow.className = `lane-row${stateClasses ? ` ${stateClasses}` : ''}`;
+  laneRow.className = 'lane-row';
   laneRow.dataset.trackId = track.id;
   laneRow.style.setProperty('--track-clip', tool ? tool.clipFill : 'rgba(74, 222, 128, 0.24)');
   laneRow.style.setProperty('--track-line', tool ? tool.clipLine : '#4ade80');
@@ -1122,10 +848,7 @@ function render() {
   workspaceBadge.style.background = activeTool.gradient;
   renderToneSelect(activeTool);
   modeValue.textContent = activeTool.name;
-  const activeTrack = sessionTracks.find((track) => track.toolId === activeTool.id);
-  outputValue.textContent = activeTrack
-    ? `${activeTrack.volume}%${activeTrack.muted ? ' / Muted' : ''}${activeTrack.solo ? ' / Solo' : ''}`
-    : (activeTool.addable ? 'Not Added' : activeTool.output);
+  outputValue.textContent = activeTool.output;
   renderInstrumentView(activeTool);
   renderTracks(sessionTracks);
 }
@@ -1151,82 +874,20 @@ function getRenderedStepElements() {
   return Array.from(ruler.querySelectorAll('.measure'));
 }
 
-function getStepLeft(stepIndex) {
+function updatePlayhead() {
   const stepElements = getRenderedStepElements();
-  const stepElement = stepElements[getClampedStep(stepIndex)];
+  const stepElement = stepElements[currentStep];
 
   if (!stepElement) {
-    return 0;
-  }
-
-  return stepElement.offsetLeft;
-}
-
-function getStepWidth(stepIndex) {
-  const stepElements = getRenderedStepElements();
-  const stepElement = stepElements[getClampedStep(stepIndex)];
-
-  if (!stepElement) {
-    return 0;
-  }
-
-  const nextElement = stepElements[stepIndex + 1];
-  return nextElement ? nextElement.offsetLeft - stepElement.offsetLeft : stepElement.offsetWidth;
-}
-
-function setPlayheadLeft(left) {
-  playhead.style.left = `${Math.max(0, left)}px`;
-}
-
-function updatePlayhead(progress = null) {
-  const stepProgress = typeof progress === 'number'
-    ? Math.max(0, Math.min(1, progress))
-    : isPlaying && !isDraggingPlayhead
-      ? Math.max(0, Math.min(1, (window.performance.now() - visualStepStartedAt) / getStepMs()))
-      : 0;
-  const stepIndex = isPlaying && !isDraggingPlayhead ? visualStepIndex : currentStep;
-  setPlayheadLeft(getStepLeft(stepIndex) + (getStepWidth(stepIndex) * stepProgress));
-}
-
-function cancelPlayheadAnimation() {
-  if (playheadAnimationFrame) {
-    window.cancelAnimationFrame(playheadAnimationFrame);
-    playheadAnimationFrame = null;
-  }
-}
-
-function animatePlayhead(runId) {
-  if (!isPlaying || runId !== playbackRunId) {
-    playheadAnimationFrame = null;
+    playhead.style.left = '0px';
     return;
   }
 
-  if (!isDraggingPlayhead) {
-    const elapsed = window.performance.now() - visualStepStartedAt;
-    const progress = Math.max(0, Math.min(1, elapsed / getStepMs()));
-    setPlayheadLeft(getStepLeft(visualStepIndex) + (getStepWidth(visualStepIndex) * progress));
-  }
-
-  playheadAnimationFrame = window.requestAnimationFrame(() => animatePlayhead(runId));
-}
-
-function startPlayheadAnimation(runId, stepIndex) {
-  visualStepIndex = getClampedStep(stepIndex);
-  visualStepStartedAt = window.performance.now();
-
-  if (!playheadAnimationFrame) {
-    playheadAnimationFrame = window.requestAnimationFrame(() => animatePlayhead(runId));
-  }
+  playhead.style.left = `${stepElement.offsetLeft}px`;
 }
 
 function setCurrentStep(step, options = {}) {
   currentStep = getClampedStep(step);
-
-  if (isPlaying) {
-    visualStepIndex = currentStep;
-    visualStepStartedAt = window.performance.now();
-  }
-
   updatePlayhead();
 
   if (isPlaying || options.keepHighlight) {
@@ -1277,16 +938,11 @@ function playCurrentStep(runId = playbackRunId) {
     return;
   }
 
-  const stepToPlay = currentStep;
   highlightCurrentStep();
-  startPlayheadAnimation(runId, stepToPlay);
+  updatePlayhead();
 
-  const tracksToPlay = getAudibleTracks().filter((track) => hasStepEvents(track.steps[stepToPlay]));
-  const startTime = audioEngine.getCurrentTime() + 0.045;
-  if (metronomeEnabled) {
-    audioEngine.triggerMetronome(stepToPlay % 4 === 0, startTime).catch(() => {});
-  }
-
+  const tracksToPlay = getAudibleTracks().filter((track) => hasStepEvents(track.steps[currentStep]));
+  const startTime = audioEngine.getCurrentTime() + 0.025;
   tracksToPlay.forEach((track) => {
     const tool = getResolvedTool(track.toolId, track.toneId);
     if (!tool) {
@@ -1295,7 +951,7 @@ function playCurrentStep(runId = playbackRunId) {
 
     audioEngine.triggerTrackStep(
       track,
-      track.steps[stepToPlay],
+      track.steps[currentStep],
       tool,
       {
         startTime,
@@ -1312,7 +968,7 @@ function playCurrentStep(runId = playbackRunId) {
     return;
   }
 
-  currentStep = (stepToPlay + 1) % stepCount;
+  currentStep = (currentStep + 1) % stepCount;
 }
 
 function queueNextPlaybackTick(runId) {
@@ -1323,10 +979,9 @@ function queueNextPlaybackTick(runId) {
   const delay = Math.max(0, nextPlaybackTickAt - window.performance.now());
   transportTimer = window.setTimeout(() => {
     playCurrentStep(runId);
-    const stepMs = getStepMs();
-    const followingTick = nextPlaybackTickAt + stepMs;
+    const followingTick = nextPlaybackTickAt + STEP_MS;
     nextPlaybackTickAt = followingTick <= window.performance.now()
-      ? window.performance.now() + stepMs
+      ? window.performance.now() + STEP_MS
       : followingTick;
     queueNextPlaybackTick(runId);
   }, delay);
@@ -1349,11 +1004,11 @@ async function startPlayback() {
     }
 
     isPlaying = true;
-    setTransportStatus(isRecording ? 'Recording' : 'Playing', true);
+    setTransportStatus('Playing', true);
     playBtn.setAttribute('aria-label', 'Playback running');
     playBtn.setAttribute('title', 'Playback running');
     playCurrentStep(runId);
-    nextPlaybackTickAt = window.performance.now() + getStepMs();
+    nextPlaybackTickAt = window.performance.now() + STEP_MS;
     queueNextPlaybackTick(runId);
   } catch (error) {
     isPlaying = false;
@@ -1364,7 +1019,6 @@ async function startPlayback() {
 function stopPlayback(resetStep = true) {
   playbackRunId += 1;
   isPlaying = false;
-  cancelPlayheadAnimation();
 
   if (transportTimer) {
     window.clearTimeout(transportTimer);
@@ -1375,7 +1029,7 @@ function stopPlayback(resetStep = true) {
   audioEngine.stopAllVoicesImmediately();
   playBtn.setAttribute('aria-label', 'Play timeline');
   playBtn.setAttribute('title', 'Play timeline');
-  setTransportStatus(isRecording ? 'Record Ready' : (sessionTracks.length > 0 ? 'Session Idle' : 'Add an instrument'));
+  setTransportStatus(sessionTracks.length > 0 ? 'Session Idle' : 'Add an instrument');
   clearStepHighlight();
 
   if (resetStep) {
@@ -1423,65 +1077,10 @@ function handleGlobalPointerUp() {
   playhead.classList.remove('is-dragging');
 }
 
-async function handleWorkspaceKeyDown(event) {
-  if (isTypingTarget(event.target) || event.altKey || event.ctrlKey || event.metaKey) {
-    return;
-  }
-
-  const keyIndex = keyboardBindings.indexOf(event.code);
-  if (keyIndex === -1 || pressedKeyboardBindings.has(event.code)) {
-    return;
-  }
-
-  const activeTool = getResolvedTool(activeToolId);
-  const key = activeTool?.keys?.[keyIndex];
-  if (!activeTool || !key) {
-    return;
-  }
-
-  event.preventDefault();
-  pressedKeyboardBindings.add(event.code);
-  keysBoard.querySelector(`[data-binding="${event.code}"]`)?.classList.add('is-keyboard-pressed');
-
-  if (event.shiftKey || isRecording) {
-    placeNoteAtCurrentStep(activeTool, key);
-  }
-
-  await previewKey(activeTool, key);
-}
-
-function handleWorkspaceKeyUp(event) {
-  if (!pressedKeyboardBindings.has(event.code)) {
-    return;
-  }
-
-  pressedKeyboardBindings.delete(event.code);
-  keysBoard.querySelector(`[data-binding="${event.code}"]`)?.classList.remove('is-keyboard-pressed');
-}
-
-function clearKeyboardBindingState() {
-  pressedKeyboardBindings.clear();
-  keysBoard.querySelectorAll('.is-keyboard-pressed').forEach((keyElement) => {
-    keyElement.classList.remove('is-keyboard-pressed');
-  });
-}
-
 toneSelect.addEventListener('change', (event) => {
   const activeTool = getTool(activeToolId);
   const nextTone = getTonePreset(activeTool, event.currentTarget.value);
   updateSelectedTone(activeTool.id, nextTone.id);
-});
-
-recordBtn.addEventListener('click', () => {
-  toggleRecordMode();
-});
-
-metronomeBtn.addEventListener('click', () => {
-  toggleMetronome();
-});
-
-tempoSlider.addEventListener('input', (event) => {
-  updateTempo(event.currentTarget.value);
 });
 
 stepEditorAddBtn.addEventListener('click', () => {
@@ -1540,11 +1139,6 @@ window.addEventListener('resize', () => {
 });
 
 playhead.addEventListener('pointerdown', handlePlayheadPointerDown);
-window.addEventListener('keydown', (event) => {
-  handleWorkspaceKeyDown(event);
-});
-window.addEventListener('keyup', handleWorkspaceKeyUp);
-window.addEventListener('blur', clearKeyboardBindingState);
 window.addEventListener('pointermove', handleGlobalPointerMove);
 window.addEventListener('pointerup', handleGlobalPointerUp);
 window.addEventListener('pointercancel', handleGlobalPointerUp);
@@ -1572,7 +1166,6 @@ rewindBtn.addEventListener('click', () => {
 });
 
 renderRuler();
-syncTransportControls();
 updatePlayhead();
 setTransportStatus(sessionTracks.length > 0 ? 'Session Idle' : 'Add an instrument');
 render();

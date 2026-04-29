@@ -3,12 +3,8 @@ import { NOTE_DURATION, SOUND_FONT } from './tools.js';
 export class AudioEngine {
   constructor() {
     this.audioContext = null;
-    this.masterGain = null;
-    this.masterLimiter = null;
     this.instrumentCache = new Map();
-    this.instrumentLoadPromises = new Map();
     this.trackGainNodes = new Map();
-    this.metronomeNodes = new Set();
     this.activeVoices = [];
     this.previewVoice = null;
     this.previewTool = null;
@@ -35,36 +31,13 @@ export class AudioEngine {
     return this.audioContext ? this.audioContext.currentTime : 0;
   }
 
-  getMasterDestination() {
-    if (!this.audioContext) {
-      return null;
-    }
-
-    if (!this.masterGain || !this.masterLimiter) {
-      this.masterGain = this.audioContext.createGain();
-      this.masterLimiter = this.audioContext.createDynamicsCompressor();
-
-      this.masterGain.gain.value = 0.92;
-      this.masterLimiter.threshold.value = -6;
-      this.masterLimiter.knee.value = 18;
-      this.masterLimiter.ratio.value = 8;
-      this.masterLimiter.attack.value = 0.004;
-      this.masterLimiter.release.value = 0.16;
-
-      this.masterGain.connect(this.masterLimiter);
-      this.masterLimiter.connect(this.audioContext.destination);
-    }
-
-    return this.masterGain;
-  }
-
   getTrackGain(track) {
     const volume = Number.isFinite(track?.volume) ? track.volume : 66;
     return Math.max(0, Math.min(1, volume / 100));
   }
 
   getStackGain(track, stepEventCount) {
-    return Math.min(0.92, 1 / Math.sqrt(Math.max(1, stepEventCount)));
+    return 1 / Math.max(1, Math.min(stepEventCount, 3));
   }
 
   getEnvelopeOptions(tool, gain) {
@@ -121,7 +94,7 @@ export class AudioEngine {
       const gainNode = this.audioContext.createGain();
       gainNode.destinationId = track.id;
       gainNode.gain.value = this.getTrackGain(track);
-      gainNode.connect(this.getMasterDestination());
+      gainNode.connect(this.audioContext.destination);
       this.trackGainNodes.set(track.id, gainNode);
     }
 
@@ -172,7 +145,11 @@ export class AudioEngine {
     return typeof matchingKey?.note === 'string' ? matchingKey.note : stepEvent.note;
   }
 
-  async ensureBaseAudioContext() {
+  async ensureAudioContext() {
+    if (!window.Soundfont) {
+      throw new Error('Audio library unavailable');
+    }
+
     if (!this.audioContext) {
       const Context = window.AudioContext || window.webkitAudioContext;
       this.audioContext = new Context();
@@ -181,14 +158,6 @@ export class AudioEngine {
     if (this.audioContext.state === 'suspended') {
       await this.audioContext.resume();
     }
-  }
-
-  async ensureAudioContext() {
-    if (!window.Soundfont) {
-      throw new Error('Audio library unavailable');
-    }
-
-    await this.ensureBaseAudioContext();
   }
 
   async getInstrument(tool, destination = null) {
@@ -201,24 +170,12 @@ export class AudioEngine {
     const cacheKey = this.getInstrumentCacheKey(instrumentTool);
 
     if (!this.instrumentCache.has(cacheKey)) {
-      if (!this.instrumentLoadPromises.has(cacheKey)) {
-        const loadPromise = window.Soundfont.instrument(this.audioContext, tool.sampleInstrument, {
-          soundfont: SOUND_FONT,
-          format: 'mp3',
-          ...(destination ? { destination } : {})
-        }).then((instrument) => {
-          this.instrumentCache.set(cacheKey, instrument);
-          this.instrumentLoadPromises.delete(cacheKey);
-          return instrument;
-        }).catch((error) => {
-          this.instrumentLoadPromises.delete(cacheKey);
-          throw error;
-        });
-
-        this.instrumentLoadPromises.set(cacheKey, loadPromise);
-      }
-
-      return this.instrumentLoadPromises.get(cacheKey);
+      const instrument = await window.Soundfont.instrument(this.audioContext, tool.sampleInstrument, {
+        soundfont: SOUND_FONT,
+        format: 'mp3',
+        ...(destination ? { destination } : {})
+      });
+      this.instrumentCache.set(cacheKey, instrument);
     }
 
     return this.instrumentCache.get(cacheKey);
@@ -244,47 +201,14 @@ export class AudioEngine {
     this.activeVoices = [];
   }
 
-  pruneActiveVoices() {
-    const now = this.audioContext ? this.audioContext.currentTime : 0;
-    this.activeVoices = this.activeVoices.filter((entry) => !entry.endsAt || entry.endsAt > now);
-  }
-
-  stopMetronomeNodes() {
-    this.metronomeNodes.forEach((oscillator) => {
-      try {
-        oscillator.stop(0);
-      } catch (error) {
-        // Oscillator may already be stopped by its scheduled envelope.
-      }
-    });
-    this.metronomeNodes.clear();
-  }
-
   stopAllVoicesImmediately() {
     this.stopToken += 1;
     this.stopActiveVoices(0);
     this.stopPreviewVoice(null, 0);
-    this.stopMetronomeNodes();
 
     if (this.audioContext && this.audioContext.state === 'running') {
       this.audioContext.suspend().catch(() => {});
     }
-  }
-
-  resetOutputGraph() {
-    this.trackGainNodes.forEach((gainNode) => {
-      try {
-        gainNode.disconnect();
-      } catch (error) {
-        // Ignore nodes that are already disconnected.
-      }
-    });
-    this.trackGainNodes.clear();
-  }
-
-  clearInstrumentCache() {
-    this.instrumentCache.clear();
-    this.instrumentLoadPromises.clear();
   }
 
   setAudioParam(audioParam, value, timeConstant = 0.01) {
@@ -312,29 +236,6 @@ export class AudioEngine {
     if (gainNode) {
       this.setAudioParam(gainNode.gain, this.getTrackGain({ volume }), 0.02);
     }
-  }
-
-  async triggerMetronome(accent = false, startTime = null) {
-    await this.ensureBaseAudioContext();
-    const clickTime = typeof startTime === 'number' ? startTime : this.audioContext.currentTime;
-    const oscillator = this.audioContext.createOscillator();
-    const gain = this.audioContext.createGain();
-
-    oscillator.type = 'sine';
-    oscillator.frequency.setValueAtTime(accent ? 1400 : 920, clickTime);
-    gain.gain.setValueAtTime(accent ? 0.18 : 0.11, clickTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, clickTime + 0.055);
-
-    oscillator.connect(gain);
-    gain.connect(this.getMasterDestination());
-    this.metronomeNodes.add(oscillator);
-    oscillator.addEventListener('ended', () => {
-      this.metronomeNodes.delete(oscillator);
-      oscillator.disconnect();
-      gain.disconnect();
-    }, { once: true });
-    oscillator.start(clickTime);
-    oscillator.stop(clickTime + 0.06);
   }
 
   async preloadInstruments(tracks, getTool) {
@@ -435,12 +336,10 @@ export class AudioEngine {
 
         this.activeVoices.push({
           voice,
-          endsAt: startTime + noteDuration + releaseTail + 0.12,
           trackId: track.id,
           stepEventCount: stepEvents.length
         });
         window.setTimeout(() => {
-          this.pruneActiveVoices();
           this.activeVoices = this.activeVoices.filter((entry) => entry.voice !== voice);
         }, Math.ceil((noteDuration + releaseTail + 0.12) * 1000));
       }));
