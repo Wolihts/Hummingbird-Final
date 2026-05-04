@@ -41,8 +41,37 @@ body {
 }
 
 button,
-input {
+input,
+a {
   font: inherit;
+}
+
+.survey-button {
+  position: fixed;
+  top: 18px;
+  right: 18px;
+  z-index: 10;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  padding: 0 16px;
+  border: 1px solid rgba(190, 242, 100, 0.42);
+  border-radius: 999px;
+  background: linear-gradient(135deg, rgba(190, 242, 100, 0.24), rgba(34, 211, 238, 0.16));
+  color: var(--text);
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 700;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(14px);
+  transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+}
+
+.survey-button:hover {
+  transform: translateY(-1px);
+  border-color: rgba(190, 242, 100, 0.68);
+  background: linear-gradient(135deg, rgba(190, 242, 100, 0.32), rgba(34, 211, 238, 0.22));
 }
 
 .app-shell {
@@ -1348,6 +1377,14 @@ input {
 }
 
 @media (max-width: 640px) {
+  .survey-button {
+    top: 12px;
+    right: 12px;
+    min-height: 36px;
+    padding: 0 12px;
+    font-size: 13px;
+  }
+
   .workspace-top,
   .workspace-card {
     padding: 20px;
